@@ -7,7 +7,7 @@ import {
   JUMP_VELOCITY, GRAVITY, SLIDE_HEIGHT, SLIDE_DURATION, LANE_SWITCH_DURATION,
 } from '../utils/constants'
 
-export type PlayerState = 'running' | 'jumping' | 'sliding' | 'dead'
+export type PlayerState = 'running' | 'jumping' | 'sliding' | 'ducking' | 'dead'
 
 // 骨骼引用
 interface BoneRef {
@@ -429,6 +429,52 @@ export class Player {
     if (clip) this.playGlbClip(clip)
   }
 
+  /** 下蹲（持续状态，用于触摸下滑） */
+  duck() {
+    if (this.state === 'dead') return
+    if (this.state === 'ducking') {
+      // 已经在下蹲，切换为站立
+      this.unduck()
+      return
+    }
+    if (this.state === 'jumping') {
+      // 空中不能下蹲
+      return
+    }
+    if (this.state === 'sliding') {
+      // 滑铲中不切换
+      return
+    }
+
+    this.state = 'ducking'
+    this.hbHeight = SLIDE_HEIGHT
+
+    // 下蹲动画：压缩身体
+    if (this.model) {
+      gsap.to(this.model.scale, { y: 0.6, x: 1.05, z: 1.05, duration: 0.2, ease: 'power2.out' })
+      gsap.to(this.model.position, { y: this.modelRestY - 0.2, duration: 0.2, ease: 'power2.out' })
+    }
+
+    const clip = this.findGlbClip(['crouch', 'duck', 'slide'])
+    if (clip) this.playGlbClip(clip)
+  }
+
+  /** 站起 */
+  private unduck() {
+    if (this.state !== 'ducking') return
+
+    this.state = 'running'
+    this.hbHeight = PLAYER_HEIGHT
+
+    // 恢复站立动画
+    if (this.model) {
+      gsap.to(this.model.scale, { x: 1, y: 1, z: 1, duration: 0.2, ease: 'back.out(1.5)' })
+      gsap.to(this.model.position, { y: this.modelRestY, duration: 0.2, ease: 'power2.out' })
+    }
+
+    this.switchToRun()
+  }
+
   moveLeft() {
     if (this.targetLaneIndex <= 0) return
     this.targetLaneIndex--
@@ -492,6 +538,12 @@ export class Player {
       if (this.slideTimer <= 0) this.endSlide()
     }
 
+    // 下蹲状态：保持下蹲姿势（动画由gsap控制）
+    if (this.state === 'ducking') {
+      // 确保碰撞箱保持下蹲高度
+      this.hbHeight = SLIDE_HEIGHT
+    }
+
     // 补充动画（骨骼/group 级，叠加在 GLB 动画之上）
     if (this.hasGlbAnim) {
       // GLB 动画已驱动，只做微调
@@ -513,12 +565,17 @@ export class Player {
 
     const t = this.animTime * 12
 
-    // 跑步时身体轻微弹跳（滑铲/跳跃时不干预，由 gsap 控制）
+    // 跑步时身体轻微弹跳（滑铲/跳跃/下蹲时不干预，由 gsap 控制）
     if (this.state === 'running') {
       const bob = Math.abs(Math.sin(t * 2)) * 0.025 + Math.sin(t * 4) * 0.005
       this.model.position.y = this.modelRestY + bob
       this.model.scale.set(1, 1, 1)
       this.model.rotation.x = 0
+    }
+
+    // 下蹲状态：保持下蹲姿势（由gsap控制）
+    if (this.state === 'ducking') {
+      // 不干预，让gsap保持下蹲动画
     }
 
     // 落地 squash（更平滑的过渡）
@@ -567,19 +624,23 @@ export class Player {
     const shin = this.bones[`shin${side}`]
     const foot = this.bones[`foot${side}`]
 
-    if (this.state === 'running') {
-      // ── 跑步（更自然的运动曲线）──
+    if (this.state === 'running' || this.state === 'ducking') {
+      // ── 跑步/下蹲（更自然的运动曲线）──
       if (thigh) {
         // 使用更平滑的正弦曲线，添加二次谐波让运动更自然
         const swing = Math.sin(t + phase * Math.PI) * 0.65 + Math.sin(t * 2 + phase * Math.PI) * 0.08
-        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), swing)
+        // 下蹲时腿部摆动幅度减小
+        const duckFactor = this.state === 'ducking' ? 0.5 : 1.0
+        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), swing * duckFactor)
         thigh.bone.quaternion.slerpQuaternions(thigh.restQuat, q, 0.85)
       }
       if (shin) {
         // 小腿：更自然的弯曲 timing，前摆时略微弯曲
         const knee = Math.sin(t + phase * Math.PI + 0.3)
         const kneeAngle = Math.max(0, knee) * 0.6 + 0.05  // 添加基础弯曲
-        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), kneeAngle)
+        // 下蹲时膝盖弯曲更大
+        const duckBonus = this.state === 'ducking' ? 0.3 : 0
+        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), kneeAngle + duckBonus)
         shin.bone.quaternion.slerpQuaternions(shin.restQuat, q, 0.75)
       }
       if (foot) {
@@ -620,11 +681,13 @@ export class Player {
     const arm = this.bones[`arm${side}`]
     const hand = this.bones[`hand${side}`]
 
-    if (this.state === 'running') {
+    if (this.state === 'running' || this.state === 'ducking') {
       if (arm) {
         // 手臂与腿反向摆动，添加自然的相位偏移
         const swing = Math.sin(t + phase * Math.PI) * 0.45 + Math.sin(t * 2 + phase * Math.PI) * 0.05
-        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -swing)
+        // 下蹲时手臂摆动幅度减小
+        const duckFactor = this.state === 'ducking' ? 0.6 : 1.0
+        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -swing * duckFactor)
         arm.bone.quaternion.slerpQuaternions(arm.restQuat, q, 0.75)
       }
       if (hand) {
@@ -680,6 +743,11 @@ export class Player {
       this.model.position.z = Math.sin(phase * 0.5) * 0.01
     }
 
+    // 下蹲状态：保持下蹲姿势（由gsap控制）
+    if (this.state === 'ducking') {
+      // 不干预，让gsap保持下蹲动画
+    }
+
     if (this.state === 'jumping') {
       // 跳跃时身体前倾 + 微收（更平滑的过渡）
       this.model.rotation.x = THREE.MathUtils.lerp(this.model.rotation.x, -0.2, 0.1)
@@ -723,6 +791,11 @@ export class Player {
 
     const clip = this.findGlbClip(['die', 'death', 'fall', 'hit'])
     if (clip) this.playGlbClip(clip)
+
+    // 停止所有gsap动画
+    gsap.killTweensOf(this.model?.scale ?? {})
+    gsap.killTweensOf(this.model?.position ?? {})
+    gsap.killTweensOf(this.model?.rotation ?? {})
 
     gsap.to(this.mesh.rotation, { x: -Math.PI / 2, duration: 0.5, ease: 'power2.in' })
     gsap.to(this.mesh.position, { y: -2, duration: 0.5, ease: 'power2.in', delay: 0.3 })

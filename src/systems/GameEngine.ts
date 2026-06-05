@@ -256,6 +256,7 @@ export class GameEngine {
       case 'right': this.player.moveRight(); break
       case 'jump':  this.player.jump();      break
       case 'slide': this.player.slide();     break
+      case 'duck':  this.player.duck();      break
     }
   }
 
