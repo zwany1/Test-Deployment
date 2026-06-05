@@ -56,12 +56,20 @@ export class Player {
   // 模型 rest position（group 级动画用）
   private modelRestY = 0
 
+  // 灵气粒子系统
+  private particles: THREE.Points | null = null
+  private particlePositions: Float32Array | null = null
+  private particleVelocities: Float32Array | null = null
+  private particleLifetimes: Float32Array | null = null
+  private particleMaxLifetime = 1.0
+
   constructor(scene: THREE.Scene) {
     this.mesh = new THREE.Group()
     this.buildPlaceholder()
     scene.add(this.mesh)
     this.mesh.position.set(LANES[1], GROUND_Y, 0)
     this.loadModel()
+    this.createParticleSystem()
   }
 
   // ── Placeholder ─────────────────────────────────────────
@@ -208,16 +216,17 @@ export class Player {
     }
   }
 
-  // ── 材质 ─────────────────────────────────────────────────
+  // ── 材质（修仙风格）─────────────────────────────────────
 
   private cyberpunkMat(original: THREE.Material): THREE.Material {
     const origColor = (original as THREE.MeshStandardMaterial).color
+    // 修仙风格：玉石质感 + 灵光效果
     return new THREE.MeshStandardMaterial({
-      color: origColor ?? new THREE.Color(0x88ccff),
-      emissive: new THREE.Color(0x0033aa),
-      emissiveIntensity: 0.8,
-      roughness: 0.35,
-      metalness: 0.7,
+      color: origColor ?? new THREE.Color(0xe8f4e8),  // 淡青玉色
+      emissive: new THREE.Color(0x2a5a3a),  // 深绿色灵光
+      emissiveIntensity: 0.6,
+      roughness: 0.25,  // 更光滑的玉石质感
+      metalness: 0.4,   // 适度的金属感
       fog: false,
     })
   }
@@ -242,24 +251,126 @@ export class Player {
     this.currentGlbClip = name
   }
 
-  // ── 光圈 ─────────────────────────────────────────────────
+  // ── 灵气光圈（修仙风格）───────────────────────────────────
 
   private addGlowRing() {
     const geo = new THREE.RingGeometry(0.5, 0.65, 32)
     geo.rotateX(-Math.PI / 2)
     const mat = new THREE.MeshBasicMaterial({
-      color: 0x00ffff, transparent: true, opacity: 0.5, side: THREE.DoubleSide,
+      color: 0x88ff88, transparent: true, opacity: 0.5, side: THREE.DoubleSide,  // 灵气绿光
     })
     const ring = new THREE.Mesh(geo, mat)
     ring.position.y = 0.02
     this.mesh.add(ring)
 
+    // 添加外层光晕
+    const glowGeo = new THREE.RingGeometry(0.65, 0.85, 32)
+    glowGeo.rotateX(-Math.PI / 2)
+    const glowMat = new THREE.MeshBasicMaterial({
+      color: 0xaaffaa, transparent: true, opacity: 0.2, side: THREE.DoubleSide,
+    })
+    const glowRing = new THREE.Mesh(glowGeo, glowMat)
+    glowRing.position.y = 0.01
+    this.mesh.add(glowRing)
+
     const animate = () => {
       if (this.state === 'dead') return
-      ring.material.opacity = 0.3 + Math.sin(performance.now() * 0.002) * 0.2
+      const t = performance.now() * 0.001
+      ring.material.opacity = 0.3 + Math.sin(t * 2) * 0.15
+      glowRing.material.opacity = 0.15 + Math.sin(t * 1.5 + 0.5) * 0.1
+      ring.rotation.z = t * 0.3
+      glowRing.rotation.z = -t * 0.2
       requestAnimationFrame(animate)
     }
     animate()
+  }
+
+  // ── 灵气粒子系统 ─────────────────────────────────────────
+
+  private createParticleSystem() {
+    const particleCount = 50
+    const geometry = new THREE.BufferGeometry()
+
+    this.particlePositions = new Float32Array(particleCount * 3)
+    this.particleVelocities = new Float32Array(particleCount * 3)
+    this.particleLifetimes = new Float32Array(particleCount)
+
+    // 初始化粒子位置和生命周期
+    for (let i = 0; i < particleCount; i++) {
+      this.resetParticle(i)
+    }
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(this.particlePositions, 3))
+
+    const material = new THREE.PointsMaterial({
+      color: 0x88ff88,
+      size: 0.08,
+      transparent: true,
+      opacity: 0.6,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+
+    this.particles = new THREE.Points(geometry, material)
+    this.mesh.add(this.particles)
+  }
+
+  private resetParticle(index: number) {
+    if (!this.particlePositions || !this.particleVelocities || !this.particleLifetimes) return
+
+    const i3 = index * 3
+    // 在角色周围随机位置生成
+    this.particlePositions[i3] = (Math.random() - 0.5) * 0.8
+    this.particlePositions[i3 + 1] = Math.random() * 0.5
+    this.particlePositions[i3 + 2] = (Math.random() - 0.5) * 0.8
+
+    // 向上飘动的速度
+    this.particleVelocities[i3] = (Math.random() - 0.5) * 0.3
+    this.particleVelocities[i3 + 1] = 0.5 + Math.random() * 0.5
+    this.particleVelocities[i3 + 2] = (Math.random() - 0.5) * 0.3
+
+    // 随机生命周期
+    this.particleLifetimes[index] = Math.random() * this.particleMaxLifetime
+  }
+
+  private updateParticles(delta: number) {
+    if (!this.particles || !this.particlePositions || !this.particleVelocities || !this.particleLifetimes) return
+
+    const positions = this.particlePositions
+    const velocities = this.particleVelocities
+    const lifetimes = this.particleLifetimes
+
+    for (let i = 0; i < lifetimes.length; i++) {
+      lifetimes[i] -= delta
+
+      if (lifetimes[i] <= 0) {
+        this.resetParticle(i)
+        continue
+      }
+
+      const i3 = i * 3
+      positions[i3] += velocities[i3] * delta
+      positions[i3 + 1] += velocities[i3 + 1] * delta
+      positions[i3 + 2] += velocities[i3 + 2] * delta
+
+      // 添加轻微的漂浮效果
+      positions[i3] += Math.sin(performance.now() * 0.001 + i) * 0.01
+    }
+
+    this.particles.geometry.attributes.position.needsUpdate = true
+
+    // 根据状态调整粒子效果
+    const material = this.particles.material as THREE.PointsMaterial
+    if (this.state === 'running') {
+      material.opacity = 0.6
+      material.size = 0.08
+    } else if (this.state === 'jumping') {
+      material.opacity = 0.8
+      material.size = 0.1
+    } else if (this.state === 'sliding') {
+      material.opacity = 0.4
+      material.size = 0.06
+    }
   }
 
   // ── 公开属性 ─────────────────────────────────────────────
@@ -390,6 +501,9 @@ export class Player {
     } else {
       this.applyGroupAnim()
     }
+
+    // 更新灵气粒子
+    this.updateParticles(delta)
   }
 
   // ── GLB 动画叠加层（微调） ──────────────────────────────
@@ -401,16 +515,16 @@ export class Player {
 
     // 跑步时身体轻微弹跳（滑铲/跳跃时不干预，由 gsap 控制）
     if (this.state === 'running') {
-      const bob = Math.abs(Math.sin(t * 2)) * 0.03
+      const bob = Math.abs(Math.sin(t * 2)) * 0.025 + Math.sin(t * 4) * 0.005
       this.model.position.y = this.modelRestY + bob
       this.model.scale.set(1, 1, 1)
       this.model.rotation.x = 0
     }
 
-    // 落地 squash
+    // 落地 squash（更平滑的过渡）
     if (this.landingTimer > 0 && this.state === 'running') {
-      const s = (this.landingTimer / 0.15) * 0.12
-      this.model.scale.set(1 + s * 0.3, 1 - s, 1 + s * 0.3)
+      const s = (this.landingTimer / 0.15) * 0.1
+      this.model.scale.set(1 + s * 0.25, 1 - s, 1 + s * 0.25)
     }
   }
 
@@ -454,43 +568,50 @@ export class Player {
     const foot = this.bones[`foot${side}`]
 
     if (this.state === 'running') {
-      // ── 跑步 ──
+      // ── 跑步（更自然的运动曲线）──
       if (thigh) {
-        const swing = Math.sin(t + phase * Math.PI) * 0.7
+        // 使用更平滑的正弦曲线，添加二次谐波让运动更自然
+        const swing = Math.sin(t + phase * Math.PI) * 0.65 + Math.sin(t * 2 + phase * Math.PI) * 0.08
         const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), swing)
-        thigh.bone.quaternion.slerpQuaternions(thigh.restQuat, q, 0.8)
+        thigh.bone.quaternion.slerpQuaternions(thigh.restQuat, q, 0.85)
       }
       if (shin) {
-        // 小腿：在腿后摆时弯曲，前摆时伸直
-        const knee = Math.sin(t + phase * Math.PI + 0.4)
-        const kneeAngle = Math.max(0, knee) * 0.7
+        // 小腿：更自然的弯曲 timing，前摆时略微弯曲
+        const knee = Math.sin(t + phase * Math.PI + 0.3)
+        const kneeAngle = Math.max(0, knee) * 0.6 + 0.05  // 添加基础弯曲
         const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), kneeAngle)
-        shin.bone.quaternion.slerpQuaternions(shin.restQuat, q, 0.7)
+        shin.bone.quaternion.slerpQuaternions(shin.restQuat, q, 0.75)
       }
       if (foot) {
-        const footAngle = Math.sin(t + phase * Math.PI) * 0.2
+        // 脚踝：更自然的滚动效果
+        const footPhase = t + phase * Math.PI
+        const footAngle = Math.sin(footPhase) * 0.15 + Math.max(0, Math.sin(footPhase + 0.5)) * 0.1
         const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), footAngle)
-        foot.bone.quaternion.slerpQuaternions(foot.restQuat, q, 0.4)
+        foot.bone.quaternion.slerpQuaternions(foot.restQuat, q, 0.5)
       }
     } else if (this.state === 'jumping') {
-      // ── 跳跃：收腿 ──
+      // ── 跳跃：收腿（更自然的蜷缩）──
       if (thigh) {
-        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.7)
-        thigh.bone.quaternion.slerp(q, 0.6)
+        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.6)
+        thigh.bone.quaternion.slerp(q, 0.65)
       }
       if (shin) {
-        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.6)
-        shin.bone.quaternion.slerp(q, 0.5)
+        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.7)
+        shin.bone.quaternion.slerp(q, 0.55)
+      }
+      if (foot) {
+        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.2)
+        foot.bone.quaternion.slerp(q, 0.4)
       }
     } else if (this.state === 'sliding') {
       // ── 滑铲：腿前伸 ──
       if (thigh) {
-        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -1.0)
-        thigh.bone.quaternion.slerp(q, 0.8)
+        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.9)
+        thigh.bone.quaternion.slerp(q, 0.85)
       }
       if (shin) {
-        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.1)
-        shin.bone.quaternion.slerp(q, 0.5)
+        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.15)
+        shin.bone.quaternion.slerp(q, 0.6)
       }
     }
   }
@@ -501,24 +622,32 @@ export class Player {
 
     if (this.state === 'running') {
       if (arm) {
-        // 手臂与腿反向摆动
-        const swing = Math.sin(t + phase * Math.PI) * 0.5
+        // 手臂与腿反向摆动，添加自然的相位偏移
+        const swing = Math.sin(t + phase * Math.PI) * 0.45 + Math.sin(t * 2 + phase * Math.PI) * 0.05
         const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -swing)
-        arm.bone.quaternion.slerpQuaternions(arm.restQuat, q, 0.7)
+        arm.bone.quaternion.slerpQuaternions(arm.restQuat, q, 0.75)
       }
       if (hand) {
-        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.15)
-        hand.bone.quaternion.slerpQuaternions(hand.restQuat, q, 0.3)
+        // 手腕自然摆动
+        const handSwing = Math.sin(t + phase * Math.PI + 0.2) * 0.1
+        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), handSwing)
+        hand.bone.quaternion.slerpQuaternions(hand.restQuat, q, 0.4)
       }
     } else if (this.state === 'jumping') {
       if (arm) {
-        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.5)
-        arm.bone.quaternion.slerp(q, 0.5)
+        // 跳跃时手臂自然张开
+        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.4)
+        arm.bone.quaternion.slerp(q, 0.55)
+      }
+      if (hand) {
+        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.1)
+        hand.bone.quaternion.slerp(q, 0.4)
       }
     } else if (this.state === 'sliding') {
       if (arm) {
-        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.4)
-        arm.bone.quaternion.slerp(q, 0.5)
+        // 滑铲时手臂向后
+        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.35)
+        arm.bone.quaternion.slerp(q, 0.55)
       }
     }
   }
@@ -530,34 +659,39 @@ export class Player {
     const t = this.animTime * 12
 
     if (this.state === 'running') {
-      // 强力跑步动画
+      // 更自然的跑步动画
       const phase = t * 2
 
-      // 上下大幅弹跳
-      const bob = Math.abs(Math.sin(phase)) * 0.08
+      // 上下弹跳（更平滑的曲线）
+      const bob = Math.abs(Math.sin(phase)) * 0.06 + Math.sin(phase * 2) * 0.01
       this.model.position.y = this.modelRestY + bob
 
-      // 前倾
-      this.model.rotation.x = Math.sin(phase) * 0.08 + 0.05
+      // 前倾（更自然的摆动）
+      this.model.rotation.x = Math.sin(phase) * 0.06 + 0.04
 
-      // 左右微摆（模拟换脚）
-      this.model.rotation.z = Math.sin(phase * 0.5) * 0.06
+      // 左右微摆（模拟换脚，更明显的节奏）
+      this.model.rotation.z = Math.sin(phase * 0.5) * 0.05 + Math.sin(phase * 1.5) * 0.01
 
-      // 轻微 scale 呼吸
-      const breath = Math.sin(phase) * 0.02
+      // 轻微 scale 呼吸（更自然）
+      const breath = Math.sin(phase) * 0.015 + Math.sin(phase * 2) * 0.005
       this.model.scale.set(1, 1 + breath, 1)
+
+      // 添加轻微的前后摆动（模拟跑步惯性）
+      this.model.position.z = Math.sin(phase * 0.5) * 0.01
     }
 
     if (this.state === 'jumping') {
-      // 跳跃时身体前倾 + 微收
-      this.model.rotation.x = THREE.MathUtils.lerp(this.model.rotation.x, -0.25, 0.12)
-      this.model.scale.y = THREE.MathUtils.lerp(this.model.scale.y, 0.92, 0.1)
+      // 跳跃时身体前倾 + 微收（更平滑的过渡）
+      this.model.rotation.x = THREE.MathUtils.lerp(this.model.rotation.x, -0.2, 0.1)
+      this.model.scale.y = THREE.MathUtils.lerp(this.model.scale.y, 0.95, 0.08)
+      this.model.scale.x = THREE.MathUtils.lerp(this.model.scale.x, 1.02, 0.08)
+      this.model.scale.z = THREE.MathUtils.lerp(this.model.scale.z, 1.02, 0.08)
     }
 
     // 落地 squash/stretch（仅跑步时）
     if (this.landingTimer > 0 && this.state === 'running') {
-      const s = (this.landingTimer / 0.15) * 0.2
-      this.model.scale.set(1 + s * 0.4, 1 - s, 1 + s * 0.4)
+      const s = (this.landingTimer / 0.15) * 0.15
+      this.model.scale.set(1 + s * 0.3, 1 - s, 1 + s * 0.3)
     }
     // 滑铲时由 gsap 控制，不干预
   }
@@ -626,16 +760,17 @@ export class Player {
     this.switchToRun()
   }
 
-  /** 无敌闪烁 */
+  /** 无敌闪烁（金光护体） */
   setGlow(on: boolean) {
     if (!this.model) return
     if (on) {
+      // 金光护体效果
       this.model.traverse(child => {
         if ((child as THREE.Mesh).isMesh) {
           const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial
           if (mat.emissive) {
-            mat.emissive.set(0xffaa00)
-            mat.emissiveIntensity = 2.5
+            mat.emissive.set(0xffd700)  // 金色
+            mat.emissiveIntensity = 2.0
           }
         }
       })
@@ -647,8 +782,8 @@ export class Player {
             if ((child as THREE.Mesh).isMesh) {
               const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial
               if (mat.emissive) {
-                mat.emissive.set(0x0033aa)
-                mat.emissiveIntensity = 0.8
+                mat.emissive.set(0x2a5a3a)  // 恢复灵光色
+                mat.emissiveIntensity = 0.6
               }
             }
           })
