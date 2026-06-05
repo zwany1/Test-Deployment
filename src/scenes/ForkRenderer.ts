@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { FORK_DECISION_ZONE, FORK_X_SHIFT } from '../utils/constants'
+import { FORK_DECISION_ZONE } from '../utils/constants'
 import type { ForkSystem } from '../systems/ForkSystem'
 
 export class ForkRenderer {

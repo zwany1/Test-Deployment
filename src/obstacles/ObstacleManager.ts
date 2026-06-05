@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { LANES, SPAWN_Z, DESPAWN_Z, COIN_FLOAT_Y, OBSTACLE_MIN_GAP, OBSTACLE_MAX_GAP, POWERUP_SPAWN_CHANCE, MAGNET_RADIUS } from '../utils/constants'
+import { LANES, SPAWN_Z, DESPAWN_Z, COIN_FLOAT_Y, OBSTACLE_MIN_GAP, OBSTACLE_MAX_GAP, POWERUP_SPAWN_CHANCE } from '../utils/constants'
 import type { MapConfig } from '../maps/MapConfig'
 import type { PowerupType } from '../store/gameStore'
 
