@@ -114,7 +114,7 @@ export function MainMenu() {
         transform: `scale(${0.9 + inkSpread * 0.1})`,
         transition: 'opacity 0.5s, transform 0.5s',
       }}>
-        将于豪历险记
+        🐖🐕历险记
       </div>
 
       {/* 副标题 */}
